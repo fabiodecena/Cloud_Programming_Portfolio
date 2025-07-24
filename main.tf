@@ -155,6 +155,33 @@ resource "aws_security_group" "alb" {
   }
 }
 
+# Add this new security group for EC2 instances
+resource "aws_security_group" "ec2" {
+  name        = "${var.environment}-ec2-sg"
+  description = "Security group for EC2 instances"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]  # Allow traffic from ALB security group
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "${var.environment}-ec2-sg"
+    Environment = var.environment
+  }
+}
+
+
 # Application Load Balancer
 resource "aws_lb" "main" {
   name               = "${var.environment}-alb"
@@ -181,7 +208,7 @@ resource "aws_lb_target_group" "main" {
 # Launch Template
 resource "aws_launch_template" "main" {
   name_prefix   = "${var.environment}-template"
-  image_id      = "ami-0cbbe2c6a1bb2ad63" # Amazon Linux  AMI ID
+  image_id      = "ami-0cbbe2c6a1bb2ad63"
   instance_type = var.instance_type
 
   user_data = base64encode(<<-EOF
@@ -196,9 +223,10 @@ resource "aws_launch_template" "main" {
 
   network_interfaces {
     associate_public_ip_address = true
-    security_groups            = [aws_security_group.alb.id]
+    security_groups            = [aws_security_group.ec2.id]  # Changed from ALB security group to EC2 security group
   }
 }
+
 
 # Auto Scaling Group
 resource "aws_autoscaling_group" "main" {
