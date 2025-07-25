@@ -61,13 +61,13 @@ resource "aws_s3_bucket" "website" {
   bucket_prefix = "${var.environment}-website-"
 }
 
-resource "aws_s3_bucket_website_configuration" "website" {
-  bucket = aws_s3_bucket.website.id
-
-  index_document {
-    suffix = "index.html"
-  }
+resource "aws_s3_object" "website" {
+  bucket       = aws_s3_bucket.website.id
+  key          = "index.html"
+  source       = "${path.module}/web/index.html"
+  content_type = "text/html"
 }
+
 
 resource "aws_s3_bucket_public_access_block" "website" {
   bucket = aws_s3_bucket.website.id
@@ -137,12 +137,19 @@ resource "aws_cloudfront_distribution" "website" {
 # Security Group for ALB
 resource "aws_security_group" "alb" {
   name        = "${var.environment}-alb-sg"
-  description = "Security group for ALB"
+  description = "Security group for Application Load Balancer"
   vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -153,19 +160,24 @@ resource "aws_security_group" "alb" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name        = "${var.environment}-alb-sg"
+    Environment = var.environment
+  }
 }
 
-# Add this new security group for EC2 instances
-resource "aws_security_group" "ec2" {
-  name        = "${var.environment}-ec2-sg"
-  description = "Security group for EC2 instances"
+# Security Group for EC2 Instances
+resource "aws_security_group" "web" {
+  name        = "${var.environment}-web-sg"
+  description = "Security group for web servers"
   vpc_id      = aws_vpc.main.id
 
   ingress {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]  # Allow traffic from ALB security group
+    security_groups = [aws_security_group.alb.id]
   }
 
   egress {
@@ -176,40 +188,66 @@ resource "aws_security_group" "ec2" {
   }
 
   tags = {
-    Name        = "${var.environment}-ec2-sg"
+    Name        = "${var.environment}-web-sg"
     Environment = var.environment
   }
 }
 
-
 # Application Load Balancer
-resource "aws_lb" "main" {
-  name               = "${var.environment}-alb"
+resource "aws_lb" "web" {
+  name               = "${var.environment}-web-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets           = aws_subnet.public[*].id
+
+  tags = {
+    Name        = "${var.environment}-web-alb"
+    Environment = var.environment
+  }
 }
 
 # ALB Target Group
-resource "aws_lb_target_group" "main" {
-  name     = "${var.environment}-tg"
+resource "aws_lb_target_group" "web" {
+  name     = "${var.environment}-web-tg"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
   health_check {
-    path                = "/"
+    enabled             = true
     healthy_threshold   = 2
-    unhealthy_threshold = 10
+    interval            = 30
+    matcher            = "200"
+    path               = "/"
+    port               = "traffic-port"
+    timeout            = 5
+    unhealthy_threshold = 2
+  }
+}
+
+# ALB Listener
+resource "aws_lb_listener" "web" {
+  load_balancer_arn = aws_lb.web.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
   }
 }
 
 # Launch Template
-resource "aws_launch_template" "main" {
-  name_prefix   = "${var.environment}-template"
-  image_id      = "ami-0cbbe2c6a1bb2ad63"
-  instance_type = var.instance_type
+resource "aws_launch_template" "web" {
+  name_prefix   = "${var.environment}-web-"
+  image_id      = "ami-0cbbe2c6a1bb2ad63" # Replace with your desired AMI ID
+  instance_type = "t2.micro"
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups            = [aws_security_group.web.id]
+  }
 
   user_data = base64encode(<<-EOF
               #!/bin/bash
@@ -217,33 +255,41 @@ resource "aws_launch_template" "main" {
               yum install -y httpd
               systemctl start httpd
               systemctl enable httpd
-              echo "<h1>Hello World from EC2</h1>" > /var/www/html/index.html
+              echo "<h1>Hello from AWS EC2!</h1>" > /var/www/html/index.html
               EOF
   )
 
-  network_interfaces {
-    associate_public_ip_address = true
-    security_groups            = [aws_security_group.ec2.id]  # Changed from ALB security group to EC2 security group
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name        = "${var.environment}-web"
+      Environment = var.environment
+    }
   }
 }
 
-
 # Auto Scaling Group
-resource "aws_autoscaling_group" "main" {
+resource "aws_autoscaling_group" "web" {
   desired_capacity    = 2
   max_size           = 4
   min_size           = 1
-  target_group_arns  = [aws_lb_target_group.main.arn]
+  target_group_arns  = [aws_lb_target_group.web.arn]
   vpc_zone_identifier = aws_subnet.public[*].id
 
   launch_template {
-    id      = aws_launch_template.main.id
+    id      = aws_launch_template.web.id
     version = "$Latest"
   }
 
   tag {
     key                 = "Name"
-    value              = "${var.environment}-asg"
+    value               = "${var.environment}-web-asg"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.environment
     propagate_at_launch = true
   }
 }
