@@ -61,11 +61,20 @@ resource "aws_s3_bucket" "website" {
   bucket_prefix = "${var.environment}-website-"
 }
 
+# Upload index.html
 resource "aws_s3_object" "website" {
   bucket       = aws_s3_bucket.website.id
   key          = "index.html"
   source       = "${path.module}/web/index.html"
   content_type = "text/html"
+}
+
+# Upload diagram.jpg
+resource "aws_s3_object" "website_image" {
+  bucket       = aws_s3_bucket.website.id
+  key          = "diagram.jpg"
+  source       = "${path.module}/web/diagram.jpg"
+  content_type = "image/jpeg"
 }
 
 
