@@ -1,6 +1,6 @@
 # Cloud Programming Portfolio
 
-A comprehensive AWS cloud infrastructure project that demonstrates the implementation of a scalable web architecture using Infrastructure as Code (IaC) with Terraform/OpenTofu.
+A comprehensive AWS cloud infrastructure project that demonstrates the implementation of a scalable web architecture using Infrastructure as Code (IaC) with Terraform.
 
 ## 🏗️ Infrastructure Overview
 
